@@ -2,33 +2,38 @@ import requests
 from datetime import datetime
 import json
 from tqdm import tqdm
+import configparser
 
-# Получение токена VK, ID VK и OAuth-ключа Яндекс.Диска реализованно из текстовых файлов:
-with open('vk_token.txt', 'r') as file:
-    VK_TOKEN = file.read()
-
-with open('vk_id.txt', 'r') as file:
-    OWNER_ID = file.read()
-
-with open('ya_oauth.txt', 'r') as file:
-    YA_OAUTH = file.read()
-
-count_photos = int(input('Количество фотографий для загрузки: '))
+IDENTIFIER = input('Введите идентификатор или короткое имя пользователя: ')
+COUNT_PHOTOS = int(input('Введите количество фотографий для загрузки: '))
 
 
-# Класс API VK для получения URL фотографий и формирования их имён
-class VKRecoveryService:
-    def __init__(self, vk_token, owner_id, count_photos):
-        self.vk_token = vk_token
-        self.owner_id = owner_id
-        self.count_photos = count_photos
+class VKRecoveryService:  # Класс API VK для получения URL фотографий и формирования их имён
+    def __init__(self):
+        config = configparser.ConfigParser()
+        config.read('access.ini')
+        self.vk_token = config['VK']['vk_token']
+        self.count_photos = COUNT_PHOTOS
+        self.identifier = IDENTIFIER
+
+    def get_id(self):  # Получаем ID пользователя по короткому имени или самому ID
+        params = {
+            'access_token': self.vk_token,
+            'v': '5.199',
+            'user_ids': self.identifier
+        }
+        response = requests.get('https://api.vk.com/method/users.get', params=params)
+        if len(response.json()['response']) == 0:
+            print('Пользователь не найден')
+        else:
+            return response.json()['response'][0]['id']
 
     def get_photos(self):
         params = {
             'access_token': self.vk_token,
             'v': '5.199',
             'album_id': 'profile',
-            'owner_id': self.owner_id,
+            'owner_id': self.get_id(),
             'extended': 1,
             'count': self.count_photos,
         }
@@ -52,19 +57,20 @@ class VKRecoveryService:
         return name_list
 
 
-vk_photos = VKRecoveryService(VK_TOKEN, OWNER_ID, count_photos).get_photos()
-vk_photos_max_q = VKRecoveryService(VK_TOKEN, OWNER_ID, count_photos).get_max_photo_urls()
-vk_photos_name = VKRecoveryService(VK_TOKEN, OWNER_ID, count_photos).get_photo_names()
+vk_photos = VKRecoveryService().get_photos()
+vk_photos_max_q = VKRecoveryService().get_max_photo_urls()
+vk_photos_name = VKRecoveryService().get_photo_names()
 
 
-# Класс Яндекс.Диска для загрузки фотографий в облачное хранилище
-class YADiskUploader:
-    def __init__(self, oauth):
-        self.oauth = oauth
+class YADiskUploader:  # Класс Яндекс.Диска для загрузки фотографий в облачное хранилище
+    def __init__(self):
+        config = configparser.ConfigParser()
+        config.read('access.ini')
+        self.ya_oauth = config['Yandex']['ya_oauth']
 
     def upload_photos(self):
         headers = {
-            'Authorization': f'OAuth {self.oauth}'
+            'Authorization': f'OAuth {self.ya_oauth}'
         }
         for url, name in tqdm(zip(vk_photos_max_q, vk_photos_name),
                               total=len(vk_photos_max_q),
@@ -84,24 +90,26 @@ class YADiskUploader:
         print('Фото загружены')
 
 
-# Функция формирования JSON-файла в соответствии с заданием
-def get_json():
-    result_list = []
-    sizes_list = []
-    for photo in vk_photos:
-        if photo['sizes'][-1]['height'] == 0:
-            sizes_list.append(photo['sizes'][-1]['type'])
-        else:
-            sizes_list.append(max(photo['sizes'], key=lambda x: x['height'] * x['width'])['type'])
-    for url, name in zip(vk_photos_max_q, vk_photos_name):
-        result_list.append({'file_name': f'{name}.jpg', 'size': f'{sizes_list[vk_photos_max_q.index(url)]}'})
-    with open('result.json', 'w') as f:
-        json.dump(result_list, f, indent=4)
+class MakeJSON:  # Класс формирования JSON-файла в соответствии с заданием
+    def __init__(self):
+        pass
 
-    print('JSON-файл создан')
+    def get_json_report(self):
+        result_list = []
+        sizes_list = []
+        for photo in vk_photos:
+            if photo['sizes'][-1]['height'] == 0:
+                sizes_list.append(photo['sizes'][-1]['type'])
+            else:
+                sizes_list.append(max(photo['sizes'], key=lambda x: x['height'] * x['width'])['type'])
+        for url, name in zip(vk_photos_max_q, vk_photos_name):
+            result_list.append({'file_name': f'{name}.jpg', 'size': f'{sizes_list[vk_photos_max_q.index(url)]}'})
+        with open('result.json', 'w') as f:
+            json.dump(result_list, f, indent=4)
+
+        print('JSON-файл создан')
 
 
 if __name__ == '__main__':
-    YADiskUploader(YA_OAUTH).upload_photos()
-    get_json()
-
+    YADiskUploader().upload_photos()
+    MakeJSON().get_json_report()
